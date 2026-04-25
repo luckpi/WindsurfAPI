@@ -104,8 +104,12 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
   ldd_status=$?
   set -e
   missing="$(printf '%s\n' "$ldd_output" | grep ' => not found' || true)"
+  is_static_binary=false
+  if printf '%s\n' "$ldd_output" | grep -Eq 'not a dynamic executable|statically linked'; then
+    is_static_binary=true
+  fi
   if [[ -n "$missing" ]]; then
-    err "The LS binary still has missing shared-library dependencies:"
+    err "The language server binary still has missing shared-library dependencies:"
     printf '%s\n' "$missing" >&2
     err "Install them and retry. Examples:"
     err "  Debian/Ubuntu: apt-get update && apt-get install -y libc6 libgcc-s1 libstdc++6"
@@ -113,8 +117,8 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
     err "  Alpine/musl:   use a glibc-based image/distro for this binary"
     exit 1
   fi
-  if [[ $ldd_status -ne 0 ]] && [[ -n "$ldd_output" ]] && ! printf '%s\n' "$ldd_output" | grep -Eq 'not a dynamic executable|statically linked'; then
-    log "Could not fully verify LS shared-library dependencies with ldd:"
+  if [[ $ldd_status -ne 0 ]] && [[ -n "$ldd_output" ]] && [[ "$is_static_binary" != true ]]; then
+    log "Could not fully verify language server shared-library dependencies with ldd:"
     printf '%s\n' "$ldd_output" >&2
   fi
 fi
