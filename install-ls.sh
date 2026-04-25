@@ -113,7 +113,7 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
     is_static_binary=true
   fi
   if [[ -n "$missing" ]]; then
-    err "The language server binary still has missing shared-library dependencies:"
+    err "The language server binary still has missing shared library dependencies:"
     printf '%s\n' "$missing" >&2
     err "Install the specific missing libraries shown above and retry. Common examples:"
     err "  Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y libc6 libgcc-s1 libstdc++6"
@@ -122,7 +122,7 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
     exit 1
   fi
   if [[ $ldd_status -ne 0 ]] && [[ -n "$ldd_output" ]] && [[ "$is_static_binary" == false ]]; then
-    log "Could not fully verify language server shared-library dependencies with ldd:"
+    log "Could not fully verify language server shared library dependencies with ldd:"
     printf '%s\n' "$ldd_output" >&2
   fi
 fi
