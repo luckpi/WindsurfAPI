@@ -105,13 +105,16 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
   set -e
   missing="$(printf '%s\n' "$ldd_output" | grep ' => not found' || true)"
   is_static_binary=false
+  # Common ldd messages for non-dynamic binaries across glibc/musl systems.
+  # Keep this conservative so we only suppress the follow-up warning for the
+  # well-known static/non-dynamic cases.
   if printf '%s\n' "$ldd_output" | grep -Eq 'not a dynamic executable|statically linked'; then
     is_static_binary=true
   fi
   if [[ -n "$missing" ]]; then
     err "The language server binary still has missing shared-library dependencies:"
     printf '%s\n' "$missing" >&2
-    err "Install them and retry. Examples:"
+    err "Install the specific missing libraries shown above and retry. Common examples:"
     err "  Debian/Ubuntu: apt-get update && apt-get install -y libc6 libgcc-s1 libstdc++6"
     err "  RHEL/CentOS:   yum install -y glibc libgcc libstdc++"
     err "  Alpine/musl:   use a glibc-based image/distro for this binary"
