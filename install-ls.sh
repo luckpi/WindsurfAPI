@@ -104,10 +104,10 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
   ldd_status=$?
   set -e
   missing="$(printf '%s\n' "$ldd_output" | grep ' => not found' || true)"
-  is_static_binary=false
   # Common ldd messages for non-dynamic binaries across glibc/musl systems.
   # Keep this conservative so we only suppress the follow-up warning for the
   # well-known static/non-dynamic cases.
+  is_static_binary=false
   if printf '%s\n' "$ldd_output" | grep -q 'not a dynamic executable' || \
      printf '%s\n' "$ldd_output" | grep -q 'statically linked'; then
     is_static_binary=true
@@ -121,7 +121,7 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
     err "  Alpine/musl:   use a glibc-based image/distro for this binary"
     exit 1
   fi
-  if [[ $ldd_status -ne 0 ]] && [[ -n "$ldd_output" ]] && [[ "$is_static_binary" != true ]]; then
+  if [[ $ldd_status -ne 0 ]] && [[ -n "$ldd_output" ]] && [[ "$is_static_binary" == false ]]; then
     log "Could not fully verify language server shared-library dependencies with ldd:"
     printf '%s\n' "$ldd_output" >&2
   fi
