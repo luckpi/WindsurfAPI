@@ -106,6 +106,8 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
+The Docker image now includes the common LS runtime libraries (`libc6`, `libgcc-s1`, `libstdc++6`) so the binary does not fail at startup with missing `glibc` / `libstdc++` errors.
+
 Default mounts:
 
 - `./.docker-data/data`: persisted `accounts.json`, `proxy.json`, `stats.json`, `runtime-config.json`, `model-access.json`, and `logs/`
@@ -155,6 +157,11 @@ bash install-ls.sh
 #   bash install-ls.sh /path/to/language_server_linux_x64
 #
 # Once swapped, /v1/models will auto-discover the newer catalog from the cloud.
+#
+# If startup fails with missing shared libraries (such as glibc / libstdc++):
+#   Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y libc6 libgcc-s1 libstdc++6
+#   RHEL/CentOS:   sudo yum install -y glibc libgcc libstdc++
+#   Alpine/musl:   switch to a glibc-based distro/container such as Debian/Ubuntu
 
 cat > .env << 'EOF'
 PORT=3003

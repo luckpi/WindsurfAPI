@@ -98,6 +98,19 @@ else
 fi
 log "Installed: $TARGET ($size, sha256:$sha...)"
 
+if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
+  missing="$(ldd "$TARGET" 2>&1 | grep 'not found' || true)"
+  if [[ -n "$missing" ]]; then
+    err "The LS binary still has missing shared-library dependencies:"
+    printf '%s\n' "$missing" >&2
+    err "Install them and retry. Examples:"
+    err "  Debian/Ubuntu: apt-get update && apt-get install -y libc6 libgcc-s1 libstdc++6"
+    err "  RHEL/CentOS:   yum install -y glibc libgcc libstdc++"
+    err "  Alpine/musl:   use a glibc-based image/distro for this binary"
+    exit 1
+  fi
+fi
+
 if [[ "$os" == "Darwin" ]]; then
   log ""
   log "macOS users: set this in your .env:"

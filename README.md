@@ -104,6 +104,8 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
+Docker 镜像已内置 LS 常见运行库（`libc6` / `libgcc-s1` / `libstdc++6`），避免容器里启动时报 `glibc` / `libstdc++` 缺失。
+
 默认挂载：
 
 - `./.docker-data/data`：持久化 `accounts.json`、`proxy.json`、`stats.json`、`runtime-config.json`、`model-access.json`、`logs/`
@@ -152,6 +154,11 @@ bash install-ls.sh
 #   bash install-ls.sh /path/to/language_server_linux_x64
 #
 # LS binary 一换，/v1/models 立刻就能看到最新模型目录了（云端自动发现）。
+#
+# 如果启动时报缺少动态库（如 glibc / libstdc++）：
+#   Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y libc6 libgcc-s1 libstdc++6
+#   RHEL/CentOS:   sudo yum install -y glibc libgcc libstdc++
+#   Alpine/musl:   建议改用 Debian/Ubuntu 这类 glibc 系统或容器
 
 cat > .env << 'EOF'
 PORT=3003

@@ -9,7 +9,13 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash curl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+      bash \
+      curl \
+      ca-certificates \
+      libc6 \
+      libgcc-s1 \
+      libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json ./
