@@ -99,7 +99,11 @@ fi
 log "Installed: $TARGET ($size, sha256:$sha...)"
 
 if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
-  missing="$(ldd "$TARGET" 2>&1 | grep ' => not found' || true)"
+  set +e
+  ldd_output="$(ldd "$TARGET" 2>&1)"
+  ldd_status=$?
+  set -e
+  missing="$(printf '%s\n' "$ldd_output" | grep ' => not found' || true)"
   if [[ -n "$missing" ]]; then
     err "The LS binary still has missing shared-library dependencies:"
     printf '%s\n' "$missing" >&2
@@ -108,6 +112,10 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
     err "  RHEL/CentOS:   yum install -y glibc libgcc libstdc++"
     err "  Alpine/musl:   use a glibc-based image/distro for this binary"
     exit 1
+  fi
+  if [[ $ldd_status -ne 0 ]] && [[ -n "$ldd_output" ]] && ! printf '%s\n' "$ldd_output" | grep -Eq 'not a dynamic executable|statically linked'; then
+    err "Warning: could not fully verify LS shared-library dependencies with ldd:"
+    printf '%s\n' "$ldd_output" >&2
   fi
 fi
 
