@@ -114,7 +114,7 @@ if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
     exit 1
   fi
   if [[ $ldd_status -ne 0 ]] && [[ -n "$ldd_output" ]] && ! printf '%s\n' "$ldd_output" | grep -Eq 'not a dynamic executable|statically linked'; then
-    err "Warning: could not fully verify LS shared-library dependencies with ldd:"
+    log "Could not fully verify LS shared-library dependencies with ldd:"
     printf '%s\n' "$ldd_output" >&2
   fi
 fi
