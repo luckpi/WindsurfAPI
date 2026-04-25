@@ -99,7 +99,7 @@ fi
 log "Installed: $TARGET ($size, sha256:$sha...)"
 
 if [[ "$os" == "Linux" ]] && command -v ldd >/dev/null 2>&1; then
-  missing="$(ldd "$TARGET" 2>&1 | grep 'not found' || true)"
+  missing="$(ldd "$TARGET" 2>&1 | grep ' => not found' || true)"
   if [[ -n "$missing" ]]; then
     err "The LS binary still has missing shared-library dependencies:"
     printf '%s\n' "$missing" >&2
