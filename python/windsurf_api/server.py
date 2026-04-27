@@ -135,7 +135,7 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
         try:
             payload = self.server.context.reference_node.get_models()
         except (subprocess.SubprocessError, json.JSONDecodeError) as exc:
-            print(f'[python-sidecar] native /v1/models failed, falling back to Node upstream: {exc}', file=sys.stderr, flush=True)
+            print(f'[python-sidecar] cached /v1/models via Node bridge failed, falling back to Node upstream: {exc}', file=sys.stderr, flush=True)
             self._proxy_request(b'')
             return
         self._json(200, payload)

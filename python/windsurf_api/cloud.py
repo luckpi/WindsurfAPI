@@ -17,6 +17,7 @@ SERVER_HOSTS = (
 USER_STATUS_PATH = '/exa.seat_management_pb.SeatManagementService/GetUserStatus'
 MODEL_CONFIGS_PATH = '/exa.api_server_pb.ApiServerService/GetCascadeModelConfigs'
 RATE_LIMIT_PATH = '/exa.api_server_pb.ApiServerService/CheckUserMessageRateLimit'
+CLIENT_VERSION = '1.9600.41'
 
 
 class ProxyConnectionError(OSError):
@@ -120,7 +121,7 @@ class CloudClient:
             request = (
                 f'POST {path} HTTP/1.1\r\n'
                 f'Host: {host}\r\n'
-                'User-Agent: windsurf/1.9600.41\r\n'
+                f'User-Agent: windsurf/{CLIENT_VERSION}\r\n'
                 'Accept: application/json\r\n'
                 'Connect-Protocol-Version: 1\r\n'
                 'Content-Type: application/json\r\n'
@@ -225,9 +226,9 @@ def _build_metadata(api_key: str) -> dict[str, Any]:
     return {
         'apiKey': api_key,
         'ideName': 'windsurf',
-        'ideVersion': '1.9600.41',
+        'ideVersion': CLIENT_VERSION,
         'extensionName': 'windsurf',
-        'extensionVersion': '1.9600.41',
+        'extensionVersion': CLIENT_VERSION,
         'locale': 'en',
     }
 
@@ -255,7 +256,7 @@ def _normalize_user_status(data: dict[str, Any]) -> dict[str, Any]:
         'weeklyPercent': plan_status.get('weeklyQuotaRemainingPercent') if isinstance(plan_status.get('weeklyQuotaRemainingPercent'), (int, float)) else None,
         'dailyResetAt': as_unix(plan_status.get('dailyQuotaResetAtUnix')),
         'weeklyResetAt': as_unix(plan_status.get('weeklyQuotaResetAtUnix')),
-        'overageBalance': plan_status.get('overageBalanceMicros', 0) / 1_000_000 if isinstance(plan_status.get('overageBalanceMicros'), (int, float)) else None,
+        'overageBalance': plan_status.get('overageBalanceMicros') / 1_000_000 if isinstance(plan_status.get('overageBalanceMicros'), (int, float)) else None,
         'prompt': {
             'limit': legacy_div(plan.get('monthlyPromptCredits')),
             'used': legacy_div(plan_status.get('usedPromptCredits')),

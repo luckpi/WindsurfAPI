@@ -1,6 +1,7 @@
 // Python sidecar bridge: reuse the Node reference implementation for routes
 // that have not been fully ported yet, keeping behavior aligned during
-// staged migration.
+// staged migration. This file lives under python/, so the imports step back
+// into ../src/* and assume execution from the repository checkout.
 import { handleModels } from '../src/handlers/models.js';
 import { MODELS, MODEL_TIER_ACCESS } from '../src/models.js';
 
