@@ -4,8 +4,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const repoRoot = '/home/runner/work/WindsurfAPI/WindsurfAPI';
+const repoRoot = join(fileURLToPath(new URL('..', import.meta.url)));
 const nodePort = 33103;
 const pythonPort = 33104;
 const apiKey = 'phase2-api-key';

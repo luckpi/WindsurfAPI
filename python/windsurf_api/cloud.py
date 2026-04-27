@@ -6,6 +6,7 @@ import json
 import socket
 import ssl
 import sys
+import time
 from typing import Any
 
 
@@ -268,7 +269,7 @@ def _normalize_user_status(data: dict[str, Any]) -> dict[str, Any]:
         'planStart': plan_status.get('planStart'),
         'planEnd': plan_status.get('planEnd'),
         'raw': data,
-        'fetchedAt': __import__('time').time_ns() // 1_000_000,
+        'fetchedAt': time.time_ns() // 1_000_000,
     }
     if out['dailyPercent'] is not None:
         out['percent'] = out['dailyPercent']
