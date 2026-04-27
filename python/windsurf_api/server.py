@@ -184,6 +184,35 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
             payload = self.server.context.state.get_account_list(self.server.context.reference_node.get_model_meta())
             self._json(200, {'accounts': payload})
             return True
+        if self.command == 'GET' and subpath == '/system-prompts':
+            self._json(200, {'prompts': self.server.context.state.get_system_prompts()})
+            return True
+        if self.command == 'GET' and subpath == '/model-access':
+            self._json(200, self.server.context.state.get_model_access_config())
+            return True
+        if self.command == 'GET' and subpath == '/stats':
+            self._json(200, self.server.context.state.get_stats())
+            return True
+        if self.command == 'GET' and subpath == '/tier-access':
+            self._json(200, self.server.context.state.get_tier_access_payload(self.server.context.reference_node.get_model_meta()))
+            return True
+        if self.command == 'GET' and subpath == '/models':
+            self._json(200, {'models': self.server.context.state.get_dashboard_models(self.server.context.reference_node.get_model_meta())})
+            return True
+        if self.command == 'GET' and subpath == '/config':
+            cfg = self.server.context.config
+            self._json(200, {
+                'port': cfg.node_port,
+                'defaultModel': cfg.default_model,
+                'maxTokens': cfg.max_tokens,
+                'logLevel': cfg.log_level,
+                'lsBinaryPath': cfg.ls_binary_path,
+                'lsPort': cfg.ls_port,
+                'codeiumApiUrl': cfg.codeium_api_url,
+                'hasApiKey': bool(cfg.api_key),
+                'hasDashboardPassword': bool(cfg.dashboard_password),
+            })
+            return True
         if self.command == 'POST' and subpath == '/accounts/refresh-credits':
             self._json(200, {
                 'success': True,

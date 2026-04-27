@@ -61,6 +61,40 @@ async function sendJson(baseUrl, path, method, body, headers = {}) {
 before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'windsurf-api-parity-test-'));
   writeFileSync(join(dataDir, 'accounts.json'), '[]\n');
+  writeFileSync(join(dataDir, 'runtime-config.json'), JSON.stringify({
+    experimental: {
+      cascadeConversationReuse: false,
+      preflightRateLimit: true,
+    },
+    systemPrompts: {
+      communicationNoTools: 'phase3 custom prompt',
+    },
+  }, null, 2));
+  writeFileSync(join(dataDir, 'model-access.json'), JSON.stringify({
+    mode: 'blocklist',
+    list: ['gpt-4o-mini', 'gemini-2.5-flash'],
+  }, null, 2));
+  writeFileSync(join(dataDir, 'stats.json'), JSON.stringify({
+    startedAt: 1710000000000,
+    totalRequests: 3,
+    successCount: 2,
+    errorCount: 1,
+    modelCounts: {
+      'gpt-4o': {
+        requests: 2,
+        success: 1,
+        errors: 1,
+        totalMs: 300,
+        recentMs: [100, 200],
+      },
+    },
+    accountCounts: {
+      acctfree: { requests: 2, success: 1, errors: 1 },
+    },
+    hourlyBuckets: [
+      { hour: '2024-03-09T16:00:00.000Z', requests: 3, errors: 1 },
+    ],
+  }, null, 2));
   writeFileSync(join(dataDir, 'proxy.json'), JSON.stringify({
     global: {
       type: 'http',
@@ -151,5 +185,24 @@ describe('python sidecar staged parity', () => {
       getJson(`http://127.0.0.1:${pythonPort}`, '/dashboard/api/accounts', headers),
     ]);
     assert.deepEqual(pythonRes, nodeRes);
+  });
+
+  it('matches phase 3 file-backed and metadata dashboard routes', async () => {
+    const headers = { 'X-Dashboard-Password': dashboardPassword };
+    const routes = [
+      '/dashboard/api/system-prompts',
+      '/dashboard/api/model-access',
+      '/dashboard/api/stats',
+      '/dashboard/api/tier-access',
+      '/dashboard/api/models',
+      '/dashboard/api/config',
+    ];
+    for (const route of routes) {
+      const [nodeRes, pythonRes] = await Promise.all([
+        getJson(`http://127.0.0.1:${nodePort}`, route, headers),
+        getJson(`http://127.0.0.1:${pythonPort}`, route, headers),
+      ]);
+      assert.deepEqual(pythonRes, nodeRes, route);
+    }
   });
 });

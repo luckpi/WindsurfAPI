@@ -20,6 +20,9 @@ class SharedState:
     def __init__(self, shared_data_dir: Path, data_dir: Path) -> None:
         self._accounts_path = shared_data_dir / 'accounts.json'
         self._proxy_path = data_dir / 'proxy.json'
+        self._runtime_config_path = data_dir / 'runtime-config.json'
+        self._stats_path = data_dir / 'stats.json'
+        self._model_access_path = data_dir / 'model-access.json'
 
     def load_accounts(self) -> list[dict[str, Any]]:
         if not self._accounts_path.exists():
@@ -65,18 +68,7 @@ class SharedState:
         return self.account_counts()['active'] > 0
 
     def load_proxy_config(self) -> dict[str, Any]:
-        if not self._proxy_path.exists():
-            return {'global': None, 'perAccount': {}}
-        try:
-            data = json.loads(self._proxy_path.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError) as exc:
-            print(
-                f'[python-sidecar] failed to read proxy config from {self._proxy_path}: '
-                f'{type(exc).__name__}: {exc}',
-                file=sys.stderr,
-                flush=True,
-            )
-            return {'global': None, 'perAccount': {}}
+        data = self._load_json_object(self._proxy_path, {'global': None, 'perAccount': {}})
         if not isinstance(data, dict):
             return {'global': None, 'perAccount': {}}
         per_account = data.get('perAccount')
@@ -198,6 +190,84 @@ class SharedState:
             })
         return results
 
+    def get_system_prompts(self) -> dict[str, str]:
+        defaults = self._runtime_defaults()['systemPrompts']
+        runtime_config = self._load_runtime_config()
+        prompts = runtime_config.get('systemPrompts')
+        if not isinstance(prompts, dict):
+            return dict(defaults)
+        merged = dict(defaults)
+        for key, value in prompts.items():
+            if isinstance(value, str):
+                merged[key] = value
+        return merged
+
+    def get_model_access_config(self) -> dict[str, Any]:
+        raw = self._load_json_object(self._model_access_path, {'mode': 'all', 'list': []})
+        mode = raw.get('mode') if isinstance(raw, dict) else 'all'
+        items = raw.get('list') if isinstance(raw, dict) else []
+        return {
+            'mode': mode if mode in {'all', 'allowlist', 'blocklist'} else 'all',
+            'list': list(items) if isinstance(items, list) else [],
+        }
+
+    def get_stats(self) -> dict[str, Any]:
+        raw = self._load_json_object(self._stats_path, self._stats_defaults())
+        state = dict(self._stats_defaults())
+        if isinstance(raw, dict):
+            state.update(raw)
+        model_counts = {}
+        raw_models = state.get('modelCounts')
+        if isinstance(raw_models, dict):
+            for model_id, stats in raw_models.items():
+                if not isinstance(stats, dict):
+                    continue
+                sorted_recent = sorted(ms for ms in stats.get('recentMs', []) if isinstance(ms, (int, float)))
+                requests = int(stats.get('requests', 0) or 0)
+                total_ms = int(stats.get('totalMs', 0) or 0)
+                model_counts[model_id] = {
+                    'requests': requests,
+                    'success': int(stats.get('success', 0) or 0),
+                    'errors': int(stats.get('errors', 0) or 0),
+                    'totalMs': total_ms,
+                    'avgMs': round(total_ms / requests) if requests > 0 else 0,
+                    'p50Ms': round(self._percentile(sorted_recent, 0.5)),
+                    'p95Ms': round(self._percentile(sorted_recent, 0.95)),
+                }
+        return {
+            'startedAt': int(state.get('startedAt', 0) or 0),
+            'totalRequests': int(state.get('totalRequests', 0) or 0),
+            'successCount': int(state.get('successCount', 0) or 0),
+            'errorCount': int(state.get('errorCount', 0) or 0),
+            'modelCounts': model_counts,
+            'accountCounts': state.get('accountCounts') if isinstance(state.get('accountCounts'), dict) else {},
+            'hourlyBuckets': state.get('hourlyBuckets') if isinstance(state.get('hourlyBuckets'), list) else [],
+        }
+
+    def get_tier_access_payload(self, model_meta: dict[str, Any]) -> dict[str, Any]:
+        tier_access = model_meta.get('tierAccess', {})
+        models = model_meta.get('models', {})
+        return {
+            'free': list(tier_access.get('free', [])),
+            'pro': list(tier_access.get('pro', [])),
+            'unknown': list(tier_access.get('unknown', [])),
+            'expired': list(tier_access.get('expired', [])),
+            'allModels': list(models.keys()),
+        }
+
+    def get_dashboard_models(self, model_meta: dict[str, Any]) -> list[dict[str, Any]]:
+        out = []
+        for model_id, info in model_meta.get('models', {}).items():
+            if not isinstance(info, dict):
+                continue
+            out.append({
+                'id': model_id,
+                'name': info.get('name', model_id),
+                'provider': info.get('provider'),
+                'credit': info.get('credit') if isinstance(info.get('credit'), (int, float)) else None,
+            })
+        return out
+
     def _available_models(
         self,
         account: dict[str, Any],
@@ -245,6 +315,12 @@ class SharedState:
             'userStatusLastFetched': int(account.get('userStatusLastFetched', 0) or 0),
         }
 
+    def _load_runtime_config(self) -> dict[str, Any]:
+        raw = self._load_json_object(self._runtime_config_path, self._runtime_defaults())
+        if not isinstance(raw, dict):
+            return self._runtime_defaults()
+        return self._deep_merge(self._runtime_defaults(), raw)
+
     def _mask_proxy(self, proxy: Any) -> Any:
         if not isinstance(proxy, dict):
             return proxy
@@ -256,3 +332,57 @@ class SharedState:
     def _iso_ms(self, timestamp_ms: int) -> str:
         dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
         return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f'{timestamp_ms % 1000:03d}Z'
+
+    def _load_json_object(self, path: Path, default: Any) -> Any:
+        if not path.exists():
+            return default
+        try:
+            return json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f'[python-sidecar] failed to read JSON state from {path}: {type(exc).__name__}: {exc}',
+                file=sys.stderr,
+                flush=True,
+            )
+            return default
+
+    def _runtime_defaults(self) -> dict[str, Any]:
+        return {
+            'experimental': {
+                'cascadeConversationReuse': True,
+                'preflightRateLimit': False,
+            },
+            'systemPrompts': {
+                'toolReinforcement': 'The functions listed above are available and callable. When the user\'s request can be answered by calling a function, emit a <tool_call> block as described. Use this exact format: <tool_call>{"name":"...","arguments":{...}}</tool_call>',
+                'communicationWithTools': 'You are accessed via API. When asked about your identity, describe your actual underlying model name and provider accurately. STRICTLY respond in the exact same language the user used in their latest message (Chinese → Chinese, English → English, Japanese → Japanese; never switch mid-conversation). Use the functions above when relevant.',
+                'communicationNoTools': 'You are accessed via API. When asked about your identity, describe your actual underlying model name and provider accurately. Answer directly. STRICTLY respond in the exact same language the user used in their latest message (Chinese → Chinese, English → English, Japanese → Japanese; never switch mid-conversation).',
+            },
+        }
+
+    def _stats_defaults(self) -> dict[str, Any]:
+        return {
+            'startedAt': 0,
+            'totalRequests': 0,
+            'successCount': 0,
+            'errorCount': 0,
+            'modelCounts': {},
+            'accountCounts': {},
+            'hourlyBuckets': [],
+        }
+
+    def _deep_merge(self, base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+        out = dict(base)
+        for key, value in override.items():
+            if key in {'__proto__', 'constructor', 'prototype'}:
+                continue
+            if isinstance(value, dict) and isinstance(base.get(key), dict):
+                out[key] = self._deep_merge(base[key], value)
+            else:
+                out[key] = value
+        return out
+
+    def _percentile(self, sorted_values: list[float], quantile: float) -> float:
+        if not sorted_values:
+            return 0
+        index = min(len(sorted_values) - 1, int(len(sorted_values) * quantile))
+        return float(sorted_values[index])

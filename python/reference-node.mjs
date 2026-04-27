@@ -15,7 +15,12 @@ if (command === 'models') {
 if (command === 'model-meta') {
   process.stdout.write(JSON.stringify({
     models: Object.fromEntries(
-      Object.entries(MODELS).map(([key, info]) => [key, { enumValue: info.enumValue || 0 }])
+      Object.entries(MODELS).map(([key, info]) => [key, {
+        enumValue: info.enumValue || 0,
+        name: info.name,
+        provider: info.provider,
+        credit: typeof info.credit === 'number' ? info.credit : null,
+      }])
     ),
     tierAccess: {
       pro: MODEL_TIER_ACCESS.pro,

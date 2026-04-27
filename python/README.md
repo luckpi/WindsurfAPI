@@ -7,6 +7,7 @@ This directory contains the first Python implementation step for the repository-
 - Native Python routes: `/health`, `/v1/models`, `/auth/status`, `/dashboard`, `/dashboard/i18n/*`, `/dashboard/data/*`
 - Native phase-2 dashboard reads: `/dashboard/api/auth`, `/dashboard/api/proxy`, `/dashboard/api/accounts`
 - Native phase-2 cloud-backed actions: `/dashboard/api/accounts/refresh-credits`, `/dashboard/api/accounts/:id/refresh-credits`, `/dashboard/api/accounts/:id/rate-limit`
+- Native phase-3 file/metadata dashboard reads: `/dashboard/api/system-prompts`, `/dashboard/api/model-access`, `/dashboard/api/stats`, `/dashboard/api/tier-access`, `/dashboard/api/models`, `/dashboard/api/config`
 - Shared state source: the same `.env` and `accounts.json` used by the Node server
 - Shared proxy source: the same `proxy.json` used by the Node server
 - Fallback behavior: every unsupported route is proxied to the existing Node server so the Python sidecar can be introduced without breaking current clients
@@ -31,6 +32,12 @@ Optional environment variables:
 - Account and proxy dashboard reads now come from Python directly using the shared `accounts.json` and `proxy.json` files.
 - Credit refresh and pre-flight rate-limit checks now call Windsurf's public Connect-RPC cloud endpoints from Python, reusing the configured per-account or global proxy.
 - Unsupported write-heavy dashboard paths still proxy to Node so the migration can keep moving without a risky big-bang cutover.
+
+## Phase 3 notes
+
+- File-backed dashboard state now reads directly from Python for `runtime-config.json`, `model-access.json`, and `stats.json`.
+- Model tables and dashboard model metadata are served from the Python sidecar via the Node bridge so Python stays aligned with the canonical Node catalog.
+- Runtime-only dashboard surfaces that depend on in-memory Node state still fall back to the Node server.
 
 ## Why it exists
 
