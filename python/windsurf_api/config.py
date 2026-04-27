@@ -39,6 +39,7 @@ class Config:
     data_dir: Path
     port: int
     node_upstream: str
+    proxy_timeout_seconds: int
     api_key: str
     dashboard_password: str
     log_level: str
@@ -72,6 +73,7 @@ def load_config() -> Config:
         data_dir=data_dir,
         port=port,
         node_upstream=node_upstream,
+        proxy_timeout_seconds=max(_parse_int('PYTHON_PROXY_TIMEOUT_SECONDS', 300), 1),
         api_key=os.environ.get('API_KEY', ''),
         dashboard_password=os.environ.get('DASHBOARD_PASSWORD', ''),
         log_level=os.environ.get('LOG_LEVEL', 'info'),

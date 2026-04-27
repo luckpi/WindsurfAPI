@@ -160,7 +160,7 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
         upstream = urlsplit(self.server.context.config.node_upstream)
         conn_cls = http.client.HTTPSConnection if upstream.scheme == 'https' else http.client.HTTPConnection
         port = upstream.port or (443 if upstream.scheme == 'https' else 80)
-        connection = conn_cls(upstream.hostname, port, timeout=300)
+        connection = conn_cls(upstream.hostname, port, timeout=self.server.context.config.proxy_timeout_seconds)
         target = self.path
         headers = {key: value for key, value in self.headers.items() if key.lower() not in HOP_BY_HOP_HEADERS}
         headers['Host'] = upstream.netloc

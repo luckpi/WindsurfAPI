@@ -21,6 +21,7 @@ Optional environment variables:
 - `PYTHON_PORT` — sidecar listen port, default `3004`
 - `PYTHON_NODE_UPSTREAM` — Node reference server base URL, default `http://127.0.0.1:${PORT:-3003}`
 - `PYTHON_MODELS_CACHE_MS` — cache duration for the model catalog exported from the Node reference implementation
+- `PYTHON_PROXY_TIMEOUT_SECONDS` — fallback proxy timeout for requests forwarded to Node, default `300`
 
 ## Why it exists
 
