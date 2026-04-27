@@ -54,7 +54,8 @@ def _parse_int(name: str, default: int) -> int:
 
 
 def load_config() -> Config:
-    shared_data_dir = ROOT / os.environ['DATA_DIR'] if os.environ.get('DATA_DIR') else ROOT
+    data_dir_env = os.environ.get('DATA_DIR')
+    shared_data_dir = ROOT / data_dir_env if data_dir_env else ROOT
     data_dir = shared_data_dir
     hostname = os.environ.get('HOSTNAME', '')
     if os.environ.get('REPLICA_ISOLATE') == '1' and hostname:
