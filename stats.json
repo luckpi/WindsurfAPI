@@ -1,12 +1,12 @@
 {
-  "startedAt": 1777298946979,
-  "totalRequests": 1,
-  "successCount": 1,
+  "startedAt": 1777299472883,
+  "totalRequests": 2,
+  "successCount": 2,
   "errorCount": 0,
   "modelCounts": {
     "gemini-2.5-flash": {
-      "requests": 1,
-      "success": 1,
+      "requests": 2,
+      "success": 2,
       "errors": 0,
       "totalMs": 0,
       "recentMs": []
@@ -16,7 +16,7 @@
   "hourlyBuckets": [
     {
       "hour": "2026-04-27T14:00:00.000Z",
-      "requests": 1,
+      "requests": 2,
       "errors": 0
     }
   ]

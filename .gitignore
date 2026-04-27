@@ -10,6 +10,8 @@ src/get-token.js
 src/test-cascade.js
 src/runtime-config.json
 proxy.json
+stats.json
+runtime-config.json
 logs/
 *.log
 .playwright-mcp/

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from .cloud import CloudClient
 from .config import Config, load_config
 from .reference import ReferenceNodeClient
 from .state import SharedState
@@ -30,6 +31,8 @@ HOP_BY_HOP_HEADERS = {
     'upgrade',
 }
 BEARER_PREFIX = 'Bearer '
+ACCOUNT_REFRESH_RE = re.compile(r'^/dashboard/api/accounts/([^/]+)/refresh-credits$')
+ACCOUNT_RATE_LIMIT_RE = re.compile(r'^/dashboard/api/accounts/([^/]+)/rate-limit$')
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class AppContext:
     config: Config
     state: SharedState
     reference_node: ReferenceNodeClient
+    cloud_client: CloudClient
     started_at: float
     package_version: str
 
@@ -101,6 +105,9 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
             })
             return
         body = self.rfile.read(int(self.headers.get('Content-Length', '0') or '0')) if with_body else b''
+        if path.startswith('/dashboard/api/'):
+            if self._handle_dashboard_api(path):
+                return
         self._proxy_request(body)
 
     def _handle_health(self) -> None:
@@ -156,6 +163,50 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
             self._send_file(dashboard_root / 'data' / file_name, 'application/json; charset=utf-8')
             return
         self._proxy_request(b'')
+
+    def _handle_dashboard_api(self, path: str) -> bool:
+        subpath = path[len('/dashboard/api'):]
+        if self.command == 'GET' and subpath == '/auth':
+            needs_auth = bool(self.server.context.config.dashboard_password or self.server.context.config.api_key)
+            if not needs_auth:
+                self._json(200, {'required': False})
+                return True
+            self._json(200, {'required': True, 'valid': self._validate_dashboard_password()})
+            return True
+        if not self._validate_dashboard_password():
+            self._json(401, {'error': 'Unauthorized. Set X-Dashboard-Password header.'})
+            return True
+        if self.command == 'GET' and subpath == '/proxy':
+            self._json(200, self.server.context.state.get_proxy_config_masked())
+            return True
+        if self.command == 'GET' and subpath == '/accounts':
+            payload = self.server.context.state.get_account_list(self.server.context.reference_node.get_model_meta())
+            self._json(200, {'accounts': payload})
+            return True
+        if self.command == 'POST' and subpath == '/accounts/refresh-credits':
+            self._json(200, {
+                'success': True,
+                'results': self.server.context.state.refresh_all_credits(self.server.context.cloud_client),
+            })
+            return True
+        refresh_match = ACCOUNT_REFRESH_RE.match(path)
+        if self.command == 'POST' and refresh_match:
+            result = self.server.context.state.refresh_credits(refresh_match.group(1), self.server.context.cloud_client)
+            self._json(200 if result.get('ok') else 400, result)
+            return True
+        rate_limit_match = ACCOUNT_RATE_LIMIT_RE.match(path)
+        if self.command == 'POST' and rate_limit_match:
+            account = self.server.context.state.get_account_by_id(rate_limit_match.group(1))
+            if not account:
+                self._json(404, {'error': 'Account not found'})
+                return True
+            result = self.server.context.cloud_client.check_message_rate_limit(
+                account['apiKey'],
+                self.server.context.state.get_effective_proxy(account['id']),
+            )
+            self._json(200, {'success': True, 'account': account['email'], **result})
+            return True
+        return False
 
     def _proxy_request(self, body: bytes) -> None:
         upstream = urlsplit(self.server.context.config.node_upstream)
@@ -238,6 +289,12 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
             token = self.headers.get('x-api-key', '')
         return token == expected
 
+    def _validate_dashboard_password(self) -> bool:
+        configured = self.server.context.config.dashboard_password or self.server.context.config.api_key
+        if not configured:
+            return True
+        return self.headers.get('X-Dashboard-Password', '') == configured
+
     def _is_native_dashboard_request(self, path: str) -> bool:
         return path in {'/dashboard', '/dashboard/'} or path.startswith('/dashboard/i18n/') or path.startswith('/dashboard/data/')
 
@@ -281,10 +338,12 @@ def _load_package_version(root: Path) -> str:
 
 def build_context(config: Config | None = None) -> AppContext:
     cfg = config or load_config()
+    reference_node = ReferenceNodeClient(cfg.root, cache_ms=cfg.models_cache_ms)
     return AppContext(
         config=cfg,
-        state=SharedState(cfg.shared_data_dir),
-        reference_node=ReferenceNodeClient(cfg.root, cache_ms=cfg.models_cache_ms),
+        state=SharedState(cfg.shared_data_dir, cfg.data_dir),
+        reference_node=reference_node,
+        cloud_client=CloudClient(timeout_seconds=min(cfg.proxy_timeout_seconds, 30)),
         started_at=time.time(),
         package_version=_load_package_version(cfg.root),
     )
