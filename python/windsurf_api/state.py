@@ -15,8 +15,13 @@ class SharedState:
             return []
         try:
             data = json.loads(self._accounts_path.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError):
-            print(f'[python-sidecar] failed to read shared accounts state from {self._accounts_path}', file=sys.stderr, flush=True)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f'[python-sidecar] failed to read shared accounts state from {self._accounts_path}: '
+                f'{type(exc).__name__}: {exc}',
+                file=sys.stderr,
+                flush=True,
+            )
             return []
         return data if isinstance(data, list) else []
 

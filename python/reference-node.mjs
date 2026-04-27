@@ -1,3 +1,6 @@
+// Python sidecar bridge: reuse the Node reference implementation for routes
+// that have not been fully ported yet, keeping behavior aligned during
+// staged migration.
 import { handleModels } from '../src/handlers/models.js';
 
 const command = process.argv[2] || '';

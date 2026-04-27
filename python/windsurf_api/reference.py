@@ -14,6 +14,7 @@ from .config import DEFAULT_MODELS_CACHE_MS
 class ReferenceNodeClient:
     def __init__(self, root: Path, cache_ms: int = DEFAULT_MODELS_CACHE_MS) -> None:
         self._root = root
+        self._script_path = self._root / 'python' / 'reference-node.mjs'
         self._cache_ms = cache_ms
         self._lock = threading.Lock()
         self._models_cache: dict[str, Any] | None = None
@@ -24,9 +25,11 @@ class ReferenceNodeClient:
         with self._lock:
             if self._models_cache is not None and now - self._models_cached_at < self._cache_ms:
                 return self._models_cache
+        if not self._script_path.exists():
+            raise FileNotFoundError(f'Node bridge script not found at {self._script_path}')
         try:
             result = subprocess.run(
-                ['node', str(self._root / 'python' / 'reference-node.mjs'), 'models'],
+                ['node', str(self._script_path), 'models'],
                 cwd=self._root,
                 check=True,
                 capture_output=True,

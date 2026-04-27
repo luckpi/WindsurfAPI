@@ -29,6 +29,7 @@ HOP_BY_HOP_HEADERS = {
     'transfer-encoding',
     'upgrade',
 }
+BEARER_PREFIX = 'Bearer '
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,10 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
 
     def _proxy_request(self, body: bytes) -> None:
         upstream = urlsplit(self.server.context.config.node_upstream)
+        if not upstream.hostname:
+            print('[python-sidecar] upstream proxy failed: missing hostname in PYTHON_NODE_UPSTREAM', file=sys.stderr, flush=True)
+            self._json(502, {'error': {'message': 'Python sidecar upstream proxy failed', 'type': 'proxy_error'}})
+            return
         conn_cls = http.client.HTTPSConnection if upstream.scheme == 'https' else http.client.HTTPConnection
         port = upstream.port or (443 if upstream.scheme == 'https' else 80)
         connection = conn_cls(upstream.hostname, port, timeout=self.server.context.config.proxy_timeout_seconds)
@@ -225,8 +230,8 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
         if not expected:
             return True
         auth = self.headers.get('Authorization', '')
-        if auth.startswith('Bearer '):
-            token = auth[7:]
+        if auth.startswith(BEARER_PREFIX):
+            token = auth[len(BEARER_PREFIX):]
         elif auth:
             token = auth
         else:
