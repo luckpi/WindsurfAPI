@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import http.client
 import json
-import os
 import re
 import subprocess
 import sys
@@ -126,7 +125,8 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
     def _handle_models(self) -> None:
         try:
             payload = self.server.context.reference_node.get_models()
-        except (subprocess.SubprocessError, json.JSONDecodeError):
+        except (subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            print(f'[python-sidecar] native /v1/models failed, falling back to Node upstream: {exc}', file=sys.stderr, flush=True)
             self._proxy_request(b'')
             return
         self._json(200, payload)
@@ -181,7 +181,8 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
         except OSError as exc:
-            self._json(502, {'error': {'message': f'Python sidecar upstream proxy failed: {exc}', 'type': 'proxy_error'}})
+            print(f'[python-sidecar] upstream proxy failed for {self.path}: {exc}', file=sys.stderr, flush=True)
+            self._json(502, {'error': {'message': 'Python sidecar upstream proxy failed', 'type': 'proxy_error'}})
         finally:
             connection.close()
 

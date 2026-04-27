@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_MODELS_CACHE_MS = 10_000
 
 
 def load_env_file(root: Path = ROOT) -> None:
@@ -19,7 +20,7 @@ def load_env_file(root: Path = ROOT) -> None:
         key, value = line.split('=', 1)
         key = key.strip()
         value = value.strip()
-        if value[:1] == value[-1:] and value[:1] in {'\"', "'"}:
+        if len(value) >= 2 and value[:1] == value[-1:] and value[:1] in {'\"', "'"}:
             value = value[1:-1]
         else:
             comment_idx = value.find(' #')
@@ -74,5 +75,5 @@ def load_config() -> Config:
         api_key=os.environ.get('API_KEY', ''),
         dashboard_password=os.environ.get('DASHBOARD_PASSWORD', ''),
         log_level=os.environ.get('LOG_LEVEL', 'info'),
-        models_cache_ms=max(_parse_int('PYTHON_MODELS_CACHE_MS', 10000), 0),
+        models_cache_ms=max(_parse_int('PYTHON_MODELS_CACHE_MS', DEFAULT_MODELS_CACHE_MS), 0),
     )

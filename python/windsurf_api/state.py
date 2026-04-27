@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ class SharedState:
         try:
             data = json.loads(self._accounts_path.read_text(encoding='utf-8'))
         except (OSError, json.JSONDecodeError):
+            print(f'[python-sidecar] failed to read shared accounts state from {self._accounts_path}', file=sys.stderr, flush=True)
             return []
         return data if isinstance(data, list) else []
 
