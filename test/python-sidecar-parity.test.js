@@ -15,6 +15,8 @@ const dashboardPassword = 'phase2-dashboard';
 let dataDir;
 let nodeProc;
 let pythonProc;
+let freeAccountId;
+let proAccountId;
 
 function startProcess(command, args, env) {
   const proc = spawn(command, args, {
@@ -144,12 +146,14 @@ before(async () => {
   }, headers);
   assert.equal(freeAdd.status, 200);
   assert.equal(proAdd.status, 200);
+  freeAccountId = freeAdd.body.account.id;
+  proAccountId = proAdd.body.account.id;
 
-  await sendJson(`http://127.0.0.1:${nodePort}`, `/dashboard/api/accounts/${freeAdd.body.account.id}`, 'PATCH', {
+  await sendJson(`http://127.0.0.1:${nodePort}`, `/dashboard/api/accounts/${freeAccountId}`, 'PATCH', {
     tier: 'free',
     blockedModels: ['gpt-4o-mini'],
   }, headers);
-  await sendJson(`http://127.0.0.1:${nodePort}`, `/dashboard/api/accounts/${proAdd.body.account.id}`, 'PATCH', {
+  await sendJson(`http://127.0.0.1:${nodePort}`, `/dashboard/api/accounts/${proAccountId}`, 'PATCH', {
     tier: 'pro',
   }, headers);
 });
@@ -203,6 +207,81 @@ describe('python sidecar staged parity', () => {
         getJson(`http://127.0.0.1:${pythonPort}`, route, headers),
       ]);
       assert.deepEqual(pythonRes, nodeRes, route);
+    }
+  });
+
+  it('matches phase 4 shared-state dashboard mutation routes', async () => {
+    const headers = { 'X-Dashboard-Password': dashboardPassword };
+    const cases = [
+      {
+        route: '/dashboard/api/system-prompts',
+        method: 'PUT',
+        body: {
+          communicationNoTools: 'phase4 prompt',
+          communicationWithTools: 'phase4 tools prompt',
+        },
+      },
+      {
+        route: '/dashboard/api/system-prompts/communicationNoTools',
+        method: 'DELETE',
+      },
+      {
+        route: '/dashboard/api/model-access',
+        method: 'PUT',
+        body: {
+          mode: 'allowlist',
+          list: ['gpt-4o', 'claude-4.5-sonnet-thinking'],
+        },
+      },
+      {
+        route: '/dashboard/api/model-access/add',
+        method: 'POST',
+        body: { model: 'gemini-2.5-flash' },
+      },
+      {
+        route: '/dashboard/api/model-access/remove',
+        method: 'POST',
+        body: { model: 'gpt-4o' },
+      },
+      {
+        route: '/dashboard/api/stats',
+        method: 'DELETE',
+      },
+      {
+        route: '/dashboard/api/proxy/global',
+        method: 'PUT',
+        body: {
+          type: 'http',
+          host: 'updated-proxy.example.com',
+          port: 8088,
+          username: 'updated-demo',
+        },
+      },
+      {
+        route: '/dashboard/api/proxy/accounts/' + proAccountId,
+        method: 'PUT',
+        body: {
+          type: 'http',
+          host: 'acct-proxy.example.com',
+          port: 9090,
+          username: 'acct-user',
+          password: 'acct-pass',
+        },
+      },
+      {
+        route: '/dashboard/api/proxy/accounts/' + freeAccountId,
+        method: 'DELETE',
+      },
+      {
+        route: '/dashboard/api/proxy/global',
+        method: 'DELETE',
+      },
+    ];
+
+    for (const testCase of cases) {
+      const nodeRes = await sendJson(`http://127.0.0.1:${nodePort}`, testCase.route, testCase.method, testCase.body, headers);
+      const pythonRes = await sendJson(`http://127.0.0.1:${pythonPort}`, testCase.route, testCase.method, testCase.body, headers);
+      assert.deepEqual(pythonRes, nodeRes, `${testCase.method} ${testCase.route}`);
     }
   });
 });

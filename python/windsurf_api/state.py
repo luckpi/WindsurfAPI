@@ -40,21 +40,7 @@ class SharedState:
         return data if isinstance(data, list) else []
 
     def save_accounts(self, accounts: list[dict[str, Any]]) -> None:
-        temp_path = self._accounts_path.with_suffix('.json.tmp')
-        try:
-            temp_path.write_text(json.dumps(accounts, ensure_ascii=False, indent=2), encoding='utf-8')
-            os.replace(temp_path, self._accounts_path)
-        except OSError as exc:
-            print(
-                f'[python-sidecar] failed to write shared accounts state to {self._accounts_path}: '
-                f'{type(exc).__name__}: {exc}',
-                file=sys.stderr,
-                flush=True,
-            )
-            try:
-                temp_path.unlink()
-            except OSError:
-                pass
+        self._save_json(self._accounts_path, accounts, description='shared accounts state')
 
     def account_counts(self) -> dict[str, int]:
         accounts = self.load_accounts()
@@ -202,6 +188,32 @@ class SharedState:
                 merged[key] = value
         return merged
 
+    def set_system_prompts(self, patch: Any) -> dict[str, str]:
+        runtime_config = self._load_runtime_config()
+        current = runtime_config.get('systemPrompts')
+        if not isinstance(current, dict):
+            current = {}
+        if isinstance(patch, dict):
+            for key, value in patch.items():
+                if isinstance(value, str):
+                    current[key] = value.strip()
+        runtime_config['systemPrompts'] = current
+        self._save_json(self._runtime_config_path, runtime_config, description='runtime config')
+        return self.get_system_prompts()
+
+    def reset_system_prompt(self, key: str | None) -> dict[str, str]:
+        runtime_config = self._load_runtime_config()
+        current = runtime_config.get('systemPrompts')
+        if not isinstance(current, dict):
+            current = {}
+        if key:
+            current.pop(key, None)
+        else:
+            current = {}
+        runtime_config['systemPrompts'] = current
+        self._save_json(self._runtime_config_path, runtime_config, description='runtime config')
+        return self.get_system_prompts()
+
     def get_model_access_config(self) -> dict[str, Any]:
         raw = self._load_json_object(self._model_access_path, {'mode': 'all', 'list': []})
         mode = raw.get('mode') if isinstance(raw, dict) else 'all'
@@ -210,6 +222,29 @@ class SharedState:
             'mode': mode if mode in {'all', 'allowlist', 'blocklist'} else 'all',
             'list': list(items) if isinstance(items, list) else [],
         }
+
+    def set_model_access_config(self, mode: Any = None, items: Any = None) -> dict[str, Any]:
+        config = self.get_model_access_config()
+        if isinstance(mode, str) and mode in {'all', 'allowlist', 'blocklist'}:
+            config['mode'] = mode
+        if isinstance(items, list):
+            config['list'] = list(items)
+        self._save_json(self._model_access_path, config, description='model access config')
+        return self.get_model_access_config()
+
+    def add_model_access(self, model_id: Any) -> dict[str, Any]:
+        config = self.get_model_access_config()
+        if isinstance(model_id, str) and model_id not in config['list']:
+            config['list'].append(model_id)
+            self._save_json(self._model_access_path, config, description='model access config')
+        return self.get_model_access_config()
+
+    def remove_model_access(self, model_id: Any) -> dict[str, Any]:
+        config = self.get_model_access_config()
+        if isinstance(model_id, str):
+            config['list'] = [item for item in config['list'] if item != model_id]
+            self._save_json(self._model_access_path, config, description='model access config')
+        return self.get_model_access_config()
 
     def get_stats(self) -> dict[str, Any]:
         raw = self._load_json_object(self._stats_path, self._stats_defaults())
@@ -244,6 +279,9 @@ class SharedState:
             'hourlyBuckets': state.get('hourlyBuckets') if isinstance(state.get('hourlyBuckets'), list) else [],
         }
 
+    def reset_stats(self) -> None:
+        self._save_json(self._stats_path, self._stats_defaults(), description='stats state')
+
     def get_tier_access_payload(self, model_meta: dict[str, Any]) -> dict[str, Any]:
         tier_access = model_meta.get('tierAccess', {})
         models = model_meta.get('models', {})
@@ -267,6 +305,38 @@ class SharedState:
                 'credit': info.get('credit') if isinstance(info.get('credit'), (int, float)) else None,
             })
         return out
+
+    def set_global_proxy(self, cfg: Any) -> dict[str, Any]:
+        proxy_config = self.load_proxy_config()
+        proxy_config['global'] = self._normalize_proxy_config(cfg, proxy_config.get('global'))
+        self._save_json(self._proxy_path, proxy_config, description='proxy config')
+        return self.get_proxy_config_masked()
+
+    def set_account_proxy(self, account_id: str, cfg: Any) -> dict[str, Any]:
+        proxy_config = self.load_proxy_config()
+        per_account = proxy_config.get('perAccount', {})
+        if not isinstance(per_account, dict):
+            per_account = {}
+        normalized = self._normalize_proxy_config(cfg, per_account.get(account_id))
+        if normalized is None:
+            per_account.pop(account_id, None)
+        else:
+            per_account[account_id] = normalized
+        proxy_config['perAccount'] = per_account
+        self._save_json(self._proxy_path, proxy_config, description='proxy config')
+        return self.get_proxy_config_masked()
+
+    def remove_proxy(self, scope: str, account_id: str | None = None) -> dict[str, Any]:
+        proxy_config = self.load_proxy_config()
+        if scope == 'global':
+            proxy_config['global'] = None
+        elif scope == 'account' and account_id:
+            per_account = proxy_config.get('perAccount', {})
+            if isinstance(per_account, dict):
+                per_account.pop(account_id, None)
+                proxy_config['perAccount'] = per_account
+        self._save_json(self._proxy_path, proxy_config, description='proxy config')
+        return self.get_proxy_config_masked()
 
     def _available_models(
         self,
@@ -346,6 +416,22 @@ class SharedState:
             )
             return default
 
+    def _save_json(self, path: Path, payload: Any, *, description: str) -> None:
+        temp_path = path.with_suffix(path.suffix + '.tmp')
+        try:
+            temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+            os.replace(temp_path, path)
+        except OSError as exc:
+            print(
+                f'[python-sidecar] failed to write {description} to {path}: {type(exc).__name__}: {exc}',
+                file=sys.stderr,
+                flush=True,
+            )
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
     def _runtime_defaults(self) -> dict[str, Any]:
         return {
             'experimental': {
@@ -386,3 +472,26 @@ class SharedState:
             return 0
         index = min(len(sorted_values) - 1, int(len(sorted_values) * quantile))
         return float(sorted_values[index])
+
+    def _normalize_proxy_config(self, cfg: Any, existing: Any) -> dict[str, Any] | None:
+        if not isinstance(cfg, dict) or not cfg.get('host'):
+            return None
+        existing_cfg = existing if isinstance(existing, dict) else {}
+        return {
+            'type': cfg.get('type') or 'http',
+            'host': cfg.get('host'),
+            'port': self._coerce_port(cfg.get('port')),
+            'username': cfg.get('username') or '',
+            'password': self._merge_proxy_password(cfg, existing_cfg),
+        }
+
+    def _merge_proxy_password(self, new_cfg: dict[str, Any], old_cfg: dict[str, Any]) -> str:
+        if 'password' not in new_cfg:
+            return str(old_cfg.get('password') or '')
+        return str(new_cfg.get('password') or '')
+
+    def _coerce_port(self, value: Any, default: int = 8080) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default

@@ -107,7 +107,7 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
             return
         body = self.rfile.read(int(self.headers.get('Content-Length', '0') or '0')) if with_body else b''
         if path.startswith('/dashboard/api/'):
-            if self._handle_dashboard_api(path):
+            if self._handle_dashboard_api(path, body):
                 return
         self._proxy_request(body)
 
@@ -165,7 +165,7 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
             return
         self._proxy_request(b'')
 
-    def _handle_dashboard_api(self, path: str) -> bool:
+    def _handle_dashboard_api(self, path: str, raw_body: bytes) -> bool:
         subpath = path[len('/dashboard/api'):]
         if self.command == 'GET' and subpath == '/auth':
             needs_auth = bool(self.server.context.config.dashboard_password or self.server.context.config.api_key)
@@ -212,6 +212,58 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
                 'hasApiKey': bool(cfg.api_key),
                 'hasDashboardPassword': bool(cfg.dashboard_password),
             })
+            return True
+        body = self._parse_json_body(raw_body)
+        if self.command == 'PUT' and subpath == '/system-prompts':
+            prompts = self.server.context.state.set_system_prompts(body)
+            self._json(200, {'success': True, 'prompts': prompts})
+            return True
+        if self.command == 'DELETE' and subpath.startswith('/system-prompts/'):
+            key = subpath.rsplit('/', 1)[-1]
+            prompts = self.server.context.state.reset_system_prompt(key)
+            self._json(200, {'success': True, 'prompts': prompts})
+            return True
+        if self.command == 'PUT' and subpath == '/model-access':
+            payload = body if isinstance(body, dict) else {}
+            config = self.server.context.state.set_model_access_config(
+                payload.get('mode'),
+                payload.get('list'),
+            )
+            self._json(200, {'success': True, 'config': config})
+            return True
+        if self.command == 'POST' and subpath == '/model-access/add':
+            payload = body if isinstance(body, dict) else {}
+            if not payload.get('model'):
+                self._json(400, {'error': 'model is required'})
+                return True
+            self._json(200, {'success': True, 'config': self.server.context.state.add_model_access(payload.get('model'))})
+            return True
+        if self.command == 'POST' and subpath == '/model-access/remove':
+            payload = body if isinstance(body, dict) else {}
+            if not payload.get('model'):
+                self._json(400, {'error': 'model is required'})
+                return True
+            self._json(200, {'success': True, 'config': self.server.context.state.remove_model_access(payload.get('model'))})
+            return True
+        if self.command == 'DELETE' and subpath == '/stats':
+            self.server.context.state.reset_stats()
+            self._json(200, {'success': True})
+            return True
+        if self.command == 'PUT' and subpath == '/proxy/global':
+            self._json(200, {'success': True, 'config': self.server.context.state.set_global_proxy(body)})
+            return True
+        if self.command == 'DELETE' and subpath == '/proxy/global':
+            self.server.context.state.remove_proxy('global')
+            self._json(200, {'success': True})
+            return True
+        proxy_account_match = re.match(r'^/proxy/accounts/([^/]+)$', subpath)
+        if self.command == 'PUT' and proxy_account_match:
+            self.server.context.state.set_account_proxy(proxy_account_match.group(1), body)
+            self._json(200, {'success': True})
+            return True
+        if self.command == 'DELETE' and proxy_account_match:
+            self.server.context.state.remove_proxy('account', proxy_account_match.group(1))
+            self._json(200, {'success': True})
             return True
         if self.command == 'POST' and subpath == '/accounts/refresh-credits':
             self._json(200, {
@@ -330,6 +382,14 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
 
     def _path_only(self) -> str:
         return self.path.split('?', 1)[0]
+
+    def _parse_json_body(self, raw: bytes) -> Any:
+        if self.command not in {'POST', 'PUT', 'PATCH'} or not raw:
+            return None
+        try:
+            return json.loads(raw.decode('utf-8'))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return None
 
     def _git_version_info(self, root: Path) -> dict[str, str]:
         def run_git(args: list[str]) -> str:
