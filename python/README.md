@@ -11,7 +11,7 @@ This directory contains the first Python implementation step for the repository-
 ## Run
 
 ```bash
-cd /home/runner/work/WindsurfAPI/WindsurfAPI
+cd /path/to/WindsurfAPI
 node src/index.js
 PYTHON_PORT=3004 python3 python/main.py
 ```

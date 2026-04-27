@@ -180,7 +180,6 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
                 if not chunk:
                     break
                 self.wfile.write(chunk)
-                self.wfile.flush()
         except OSError as exc:
             self._json(502, {'error': {'message': f'Python sidecar upstream proxy failed: {exc}', 'type': 'proxy_error'}})
         finally:

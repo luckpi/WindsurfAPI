@@ -128,7 +128,7 @@ docker compose logs -f
 其余接口会自动回源到现有 Node 服务，因此可以先双栈跑起来，再逐步把高风险协议路径迁到 Python。
 
 ```bash
-cd /home/runner/work/WindsurfAPI/WindsurfAPI
+cd /path/to/WindsurfAPI
 node src/index.js
 PYTHON_PORT=3004 python3 python/main.py
 ```
