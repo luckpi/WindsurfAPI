@@ -269,7 +269,7 @@ def _normalize_user_status(data: dict[str, Any]) -> dict[str, Any]:
         'planStart': plan_status.get('planStart'),
         'planEnd': plan_status.get('planEnd'),
         'raw': data,
-        'fetchedAt': time.time_ns() // 1_000_000,
+        'fetchedAt': int(time.time() * 1000),
     }
     if out['dailyPercent'] is not None:
         out['percent'] = out['dailyPercent']

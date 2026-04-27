@@ -33,6 +33,7 @@ HOP_BY_HOP_HEADERS = {
 BEARER_PREFIX = 'Bearer '
 ACCOUNT_REFRESH_RE = re.compile(r'^/dashboard/api/accounts/([^/]+)/refresh-credits$')
 ACCOUNT_RATE_LIMIT_RE = re.compile(r'^/dashboard/api/accounts/([^/]+)/rate-limit$')
+MAX_CLOUD_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -343,7 +344,7 @@ def build_context(config: Config | None = None) -> AppContext:
         config=cfg,
         state=SharedState(cfg.shared_data_dir, cfg.data_dir),
         reference_node=reference_node,
-        cloud_client=CloudClient(timeout_seconds=min(cfg.proxy_timeout_seconds, 30)),
+        cloud_client=CloudClient(timeout_seconds=min(cfg.proxy_timeout_seconds, MAX_CLOUD_TIMEOUT_SECONDS)),
         started_at=time.time(),
         package_version=_load_package_version(cfg.root),
     )

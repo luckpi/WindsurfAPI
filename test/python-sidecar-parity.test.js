@@ -59,7 +59,7 @@ async function sendJson(baseUrl, path, method, body, headers = {}) {
 }
 
 before(async () => {
-  dataDir = mkdtempSync(join(tmpdir(), 'wfapi-python-phase2-'));
+  dataDir = mkdtempSync(join(tmpdir(), 'windsurf-api-python-test-'));
   writeFileSync(join(dataDir, 'accounts.json'), '[]\n');
   writeFileSync(join(dataDir, 'proxy.json'), JSON.stringify({
     global: {

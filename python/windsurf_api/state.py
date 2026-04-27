@@ -255,4 +255,4 @@ class SharedState:
 
     def _iso_ms(self, timestamp_ms: int) -> str:
         dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
-        return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f'{dt.microsecond // 1000:03d}Z'
+        return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f'{timestamp_ms % 1000:03d}Z'
