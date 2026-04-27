@@ -22,7 +22,7 @@ class ReferenceNodeClient:
             if self._models_cache is not None and now - self._models_cached_at < self._cache_ms:
                 return self._models_cache
         result = subprocess.run(
-            ['node', str(self._root / 'scripts' / 'python-reference.mjs'), 'models'],
+            ['node', str(self._root / 'python' / 'reference-node.mjs'), 'models'],
             cwd=self._root,
             check=True,
             capture_output=True,
