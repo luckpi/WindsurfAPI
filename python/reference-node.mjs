@@ -1,0 +1,36 @@
+// Python sidecar bridge: reuse the Node reference implementation for routes
+// that have not been fully ported yet, keeping behavior aligned during
+// staged migration. This file lives under python/, so the imports step back
+// into ../src/* and assume execution from the repository checkout.
+import { handleModels } from '../src/handlers/models.js';
+import { MODELS, MODEL_TIER_ACCESS } from '../src/models.js';
+
+const command = process.argv[2] || '';
+
+if (command === 'models') {
+  process.stdout.write(JSON.stringify(handleModels()));
+  process.exit(0);
+}
+
+if (command === 'model-meta') {
+  process.stdout.write(JSON.stringify({
+    models: Object.fromEntries(
+      Object.entries(MODELS).map(([key, info]) => [key, {
+        enumValue: info.enumValue || 0,
+        name: info.name,
+        provider: info.provider,
+        credit: typeof info.credit === 'number' ? info.credit : null,
+      }])
+    ),
+    tierAccess: {
+      pro: MODEL_TIER_ACCESS.pro,
+      free: MODEL_TIER_ACCESS.free,
+      unknown: MODEL_TIER_ACCESS.unknown,
+      expired: MODEL_TIER_ACCESS.expired,
+    },
+  }));
+  process.exit(0);
+}
+
+process.stderr.write(`Unknown python reference command: ${command}\n`);
+process.exit(1);

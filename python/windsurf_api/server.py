@@ -1,0 +1,456 @@
+from __future__ import annotations
+
+import http.client
+import json
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlsplit
+
+from .cloud import CloudClient
+from .config import Config, load_config
+from .reference import ReferenceNodeClient
+from .state import SharedState
+
+
+DASHBOARD_COOKIE_RE = re.compile(r'(?:^|;\s*)dashboard_skin=([^;]+)')
+LOCALE_FILE_RE = re.compile(r'^[a-zA-Z0-9\-]+\.json$')
+HOP_BY_HOP_HEADERS = {
+    'connection',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'te',
+    'trailers',
+    'transfer-encoding',
+    'upgrade',
+}
+BEARER_PREFIX = 'Bearer '
+ACCOUNT_REFRESH_RE = re.compile(r'^/dashboard/api/accounts/([^/]+)/refresh-credits$')
+ACCOUNT_RATE_LIMIT_RE = re.compile(r'^/dashboard/api/accounts/([^/]+)/rate-limit$')
+MAX_CLOUD_TIMEOUT_SECONDS = 30
+
+
+@dataclass(frozen=True)
+class AppContext:
+    config: Config
+    state: SharedState
+    reference_node: ReferenceNodeClient
+    cloud_client: CloudClient
+    started_at: float
+    package_version: str
+
+
+class WindsurfPythonServer(ThreadingHTTPServer):
+    def __init__(self, server_address: tuple[str, int], context: AppContext) -> None:
+        super().__init__(server_address, WindsurfRequestHandler)
+        self.context = context
+
+
+class WindsurfRequestHandler(BaseHTTPRequestHandler):
+    server: WindsurfPythonServer
+    protocol_version = 'HTTP/1.1'
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self._write_common_cors_headers()
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        self._handle_request(with_body=False)
+
+    def do_POST(self) -> None:
+        self._handle_request(with_body=True)
+
+    def do_PUT(self) -> None:
+        self._handle_request(with_body=True)
+
+    def do_PATCH(self) -> None:
+        self._handle_request(with_body=True)
+
+    def do_DELETE(self) -> None:
+        self._handle_request(with_body=False)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        sys.stderr.write('[python-sidecar] ' + format % args + '\n')
+
+    def _handle_request(self, *, with_body: bool) -> None:
+        path = self._path_only()
+        if path == '/favicon.ico':
+            self.send_response(204)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if self.command == 'GET' and self._is_native_dashboard_request(path):
+            self._serve_dashboard_asset(path)
+            return
+        if self.command == 'GET' and path == '/health':
+            self._handle_health()
+            return
+        if self.command == 'GET' and path == '/v1/models':
+            self._handle_models()
+            return
+        if self.command == 'GET' and path == '/auth/status':
+            if not self._validate_api_key():
+                self._json(401, {'error': {'message': 'Invalid API key', 'type': 'auth_error'}})
+                return
+            self._json(200, {
+                'authenticated': self.server.context.state.is_authenticated(),
+                **self.server.context.state.account_counts(),
+            })
+            return
+        body = self.rfile.read(int(self.headers.get('Content-Length', '0') or '0')) if with_body else b''
+        if path.startswith('/dashboard/api/'):
+            if self._handle_dashboard_api(path, body):
+                return
+        self._proxy_request(body)
+
+    def _handle_health(self) -> None:
+        query = parse_qs(urlsplit(self.path).query)
+        if query.get('verbose') == ['1']:
+            self._proxy_request(b'')
+            return
+        ctx = self.server.context
+        version_info = self._git_version_info(ctx.config.root)
+        payload = {
+            'status': 'ok',
+            'provider': 'WindsurfAPI bydwgx1337',
+            'version': ctx.package_version,
+            'commit': version_info['commit'],
+            'commitMessage': version_info['commitMessage'],
+            'commitDate': version_info['commitDate'],
+            'branch': version_info['branch'],
+            'uptime': round(time.time() - ctx.started_at),
+            'accounts': ctx.state.account_counts(),
+        }
+        self._json(200, payload)
+
+    def _handle_models(self) -> None:
+        try:
+            payload = self.server.context.reference_node.get_models()
+        except (subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            print(f'[python-sidecar] cached /v1/models via Node bridge failed, falling back to Node upstream: {exc}', file=sys.stderr, flush=True)
+            self._proxy_request(b'')
+            return
+        self._json(200, payload)
+
+    def _serve_dashboard_asset(self, path: str) -> None:
+        dashboard_root = self.server.context.config.root / 'src' / 'dashboard'
+        if path in {'/dashboard', '/dashboard/'}:
+            file_name = 'index-sketch.html' if self._dashboard_skin() == 'sketch' else 'index.html'
+            self._send_file(dashboard_root / file_name, 'text/html; charset=utf-8', extra_headers={
+                'Vary': 'Cookie',
+                'Cache-Control': 'no-cache',
+            })
+            return
+        if path.startswith('/dashboard/i18n/'):
+            file_name = path.split('/dashboard/i18n/', 1)[1]
+            if not LOCALE_FILE_RE.match(file_name):
+                self._json(400, {'error': 'Invalid locale file'})
+                return
+            self._send_file(dashboard_root / 'i18n' / file_name, 'application/json; charset=utf-8')
+            return
+        if path.startswith('/dashboard/data/'):
+            file_name = path.split('/dashboard/data/', 1)[1]
+            if not LOCALE_FILE_RE.match(file_name):
+                self._json(400, {'error': 'Invalid data file'})
+                return
+            self._send_file(dashboard_root / 'data' / file_name, 'application/json; charset=utf-8')
+            return
+        self._proxy_request(b'')
+
+    def _handle_dashboard_api(self, path: str, raw_body: bytes) -> bool:
+        subpath = path[len('/dashboard/api'):]
+        if self.command == 'GET' and subpath == '/auth':
+            needs_auth = bool(self.server.context.config.dashboard_password or self.server.context.config.api_key)
+            if not needs_auth:
+                self._json(200, {'required': False})
+                return True
+            self._json(200, {'required': True, 'valid': self._validate_dashboard_password()})
+            return True
+        if not self._validate_dashboard_password():
+            self._json(401, {'error': 'Unauthorized. Set X-Dashboard-Password header.'})
+            return True
+        if self.command == 'GET' and subpath == '/proxy':
+            self._json(200, self.server.context.state.get_proxy_config_masked())
+            return True
+        if self.command == 'GET' and subpath == '/accounts':
+            payload = self.server.context.state.get_account_list(self.server.context.reference_node.get_model_meta())
+            self._json(200, {'accounts': payload})
+            return True
+        if self.command == 'GET' and subpath == '/system-prompts':
+            self._json(200, {'prompts': self.server.context.state.get_system_prompts()})
+            return True
+        if self.command == 'GET' and subpath == '/model-access':
+            self._json(200, self.server.context.state.get_model_access_config())
+            return True
+        if self.command == 'GET' and subpath == '/stats':
+            self._json(200, self.server.context.state.get_stats())
+            return True
+        if self.command == 'GET' and subpath == '/tier-access':
+            self._json(200, self.server.context.state.get_tier_access_payload(self.server.context.reference_node.get_model_meta()))
+            return True
+        if self.command == 'GET' and subpath == '/models':
+            self._json(200, {'models': self.server.context.state.get_dashboard_models(self.server.context.reference_node.get_model_meta())})
+            return True
+        if self.command == 'GET' and subpath == '/config':
+            cfg = self.server.context.config
+            self._json(200, {
+                'port': cfg.node_port,
+                'defaultModel': cfg.default_model,
+                'maxTokens': cfg.max_tokens,
+                'logLevel': cfg.log_level,
+                'lsBinaryPath': cfg.ls_binary_path,
+                'lsPort': cfg.ls_port,
+                'codeiumApiUrl': cfg.codeium_api_url,
+                'hasApiKey': bool(cfg.api_key),
+                'hasDashboardPassword': bool(cfg.dashboard_password),
+            })
+            return True
+        body = self._parse_json_body(raw_body)
+        if self.command == 'PUT' and subpath == '/system-prompts':
+            prompts = self.server.context.state.set_system_prompts(body)
+            self._json(200, {'success': True, 'prompts': prompts})
+            return True
+        if self.command == 'DELETE' and subpath.startswith('/system-prompts/'):
+            key = subpath.rsplit('/', 1)[-1]
+            prompts = self.server.context.state.reset_system_prompt(key)
+            self._json(200, {'success': True, 'prompts': prompts})
+            return True
+        if self.command == 'PUT' and subpath == '/model-access':
+            payload = body if isinstance(body, dict) else {}
+            config = self.server.context.state.set_model_access_config(
+                payload.get('mode'),
+                payload.get('list'),
+            )
+            self._json(200, {'success': True, 'config': config})
+            return True
+        if self.command == 'POST' and subpath == '/model-access/add':
+            payload = body if isinstance(body, dict) else {}
+            if not payload.get('model'):
+                self._json(400, {'error': 'model is required'})
+                return True
+            self._json(200, {'success': True, 'config': self.server.context.state.add_model_access(payload.get('model'))})
+            return True
+        if self.command == 'POST' and subpath == '/model-access/remove':
+            payload = body if isinstance(body, dict) else {}
+            if not payload.get('model'):
+                self._json(400, {'error': 'model is required'})
+                return True
+            self._json(200, {'success': True, 'config': self.server.context.state.remove_model_access(payload.get('model'))})
+            return True
+        if self.command == 'DELETE' and subpath == '/stats':
+            self.server.context.state.reset_stats()
+            self._json(200, {'success': True})
+            return True
+        if self.command == 'PUT' and subpath == '/proxy/global':
+            self._json(200, {'success': True, 'config': self.server.context.state.set_global_proxy(body)})
+            return True
+        if self.command == 'DELETE' and subpath == '/proxy/global':
+            self.server.context.state.remove_proxy('global')
+            self._json(200, {'success': True})
+            return True
+        proxy_account_match = re.match(r'^/proxy/accounts/([^/]+)$', subpath)
+        if self.command == 'PUT' and proxy_account_match:
+            self.server.context.state.set_account_proxy(proxy_account_match.group(1), body)
+            self._json(200, {'success': True})
+            return True
+        if self.command == 'DELETE' and proxy_account_match:
+            self.server.context.state.remove_proxy('account', proxy_account_match.group(1))
+            self._json(200, {'success': True})
+            return True
+        if self.command == 'POST' and subpath == '/accounts/refresh-credits':
+            self._json(200, {
+                'success': True,
+                'results': self.server.context.state.refresh_all_credits(self.server.context.cloud_client),
+            })
+            return True
+        refresh_match = ACCOUNT_REFRESH_RE.match(path)
+        if self.command == 'POST' and refresh_match:
+            result = self.server.context.state.refresh_credits(refresh_match.group(1), self.server.context.cloud_client)
+            self._json(200 if result.get('ok') else 400, result)
+            return True
+        rate_limit_match = ACCOUNT_RATE_LIMIT_RE.match(path)
+        if self.command == 'POST' and rate_limit_match:
+            account = self.server.context.state.get_account_by_id(rate_limit_match.group(1))
+            if not account:
+                self._json(404, {'error': 'Account not found'})
+                return True
+            result = self.server.context.cloud_client.check_message_rate_limit(
+                account['apiKey'],
+                self.server.context.state.get_effective_proxy(account['id']),
+            )
+            self._json(200, {'success': True, 'account': account['email'], **result})
+            return True
+        return False
+
+    def _proxy_request(self, body: bytes) -> None:
+        upstream = urlsplit(self.server.context.config.node_upstream)
+        if not upstream.hostname:
+            print('[python-sidecar] upstream proxy failed: missing hostname in PYTHON_NODE_UPSTREAM', file=sys.stderr, flush=True)
+            self._json(502, {'error': {'message': 'Python sidecar upstream proxy failed', 'type': 'proxy_error'}})
+            return
+        conn_cls = http.client.HTTPSConnection if upstream.scheme == 'https' else http.client.HTTPConnection
+        port = upstream.port or (443 if upstream.scheme == 'https' else 80)
+        connection = conn_cls(upstream.hostname, port, timeout=self.server.context.config.proxy_timeout_seconds)
+        target = self.path
+        headers = {key: value for key, value in self.headers.items() if key.lower() not in HOP_BY_HOP_HEADERS}
+        headers['Host'] = upstream.netloc
+        headers['X-Forwarded-For'] = self.client_address[0]
+        headers['X-Forwarded-Proto'] = 'https' if upstream.scheme == 'https' else 'http'
+        try:
+            connection.request(self.command, target, body=body if body else None, headers=headers)
+            response = connection.getresponse()
+            self.send_response(response.status, response.reason)
+            for key, value in response.getheaders():
+                if key.lower() in HOP_BY_HOP_HEADERS:
+                    continue
+                self.send_header(key, value)
+            self.end_headers()
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except OSError as exc:
+            print(f'[python-sidecar] upstream proxy failed for {self.path}: {exc}', file=sys.stderr, flush=True)
+            self._json(502, {'error': {'message': 'Python sidecar upstream proxy failed', 'type': 'proxy_error'}})
+        finally:
+            connection.close()
+
+    def _send_file(self, path: Path, content_type: str, *, extra_headers: dict[str, str] | None = None) -> None:
+        try:
+            data = path.read_bytes()
+        except OSError:
+            self._json(404, {'error': 'File not found'})
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(data)))
+        if extra_headers:
+            for key, value in extra_headers.items():
+                self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _json(self, status: int, payload: Any) -> None:
+        data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self._write_common_cors_headers()
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _write_common_cors_headers(self) -> None:
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version, X-Dashboard-Password')
+
+    def _dashboard_skin(self) -> str:
+        cookie = self.headers.get('Cookie', '')
+        match = DASHBOARD_COOKIE_RE.search(cookie)
+        return match.group(1) if match else ''
+
+    def _validate_api_key(self) -> bool:
+        expected = self.server.context.config.api_key
+        if not expected:
+            return True
+        auth = self.headers.get('Authorization', '')
+        if auth.startswith(BEARER_PREFIX):
+            token = auth[len(BEARER_PREFIX):]
+        elif auth:
+            token = auth
+        else:
+            token = self.headers.get('x-api-key', '')
+        return token == expected
+
+    def _validate_dashboard_password(self) -> bool:
+        configured = self.server.context.config.dashboard_password or self.server.context.config.api_key
+        if not configured:
+            return True
+        return self.headers.get('X-Dashboard-Password', '') == configured
+
+    def _is_native_dashboard_request(self, path: str) -> bool:
+        return path in {'/dashboard', '/dashboard/'} or path.startswith('/dashboard/i18n/') or path.startswith('/dashboard/data/')
+
+    def _path_only(self) -> str:
+        return self.path.split('?', 1)[0]
+
+    def _parse_json_body(self, raw: bytes) -> Any:
+        if self.command not in {'POST', 'PUT', 'PATCH'} or not raw:
+            return None
+        try:
+            return json.loads(raw.decode('utf-8'))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+
+    def _git_version_info(self, root: Path) -> dict[str, str]:
+        def run_git(args: list[str]) -> str:
+            try:
+                result = subprocess.run(
+                    ['git', *args],
+                    cwd=root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+            except (subprocess.SubprocessError, OSError):
+                return ''
+            return result.stdout.strip()
+
+        git_dir = root / '.git'
+        if not git_dir.exists():
+            return {'commit': '', 'commitMessage': '', 'commitDate': '', 'branch': 'unknown'}
+        return {
+            'commit': run_git(['rev-parse', '--short', 'HEAD']),
+            'commitMessage': run_git(['log', '-1', '--pretty=format:%s']),
+            'commitDate': run_git(['log', '-1', '--pretty=format:%cI']),
+            'branch': run_git(['rev-parse', '--abbrev-ref', 'HEAD']) or 'unknown',
+        }
+
+
+def _load_package_version(root: Path) -> str:
+    package_path = root / 'package.json'
+    try:
+        package = json.loads(package_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return '0.0.0'
+    return str(package.get('version', '0.0.0'))
+
+
+def build_context(config: Config | None = None) -> AppContext:
+    cfg = config or load_config()
+    reference_node = ReferenceNodeClient(cfg.root, cache_ms=cfg.models_cache_ms)
+    return AppContext(
+        config=cfg,
+        state=SharedState(cfg.shared_data_dir, cfg.data_dir),
+        reference_node=reference_node,
+        cloud_client=CloudClient(timeout_seconds=min(cfg.proxy_timeout_seconds, MAX_CLOUD_TIMEOUT_SECONDS)),
+        started_at=time.time(),
+        package_version=_load_package_version(cfg.root),
+    )
+
+
+def main() -> None:
+    context = build_context()
+    server = WindsurfPythonServer(('0.0.0.0', context.config.port), context)
+    print(f'[python-sidecar] listening on http://0.0.0.0:{context.config.port}', flush=True)
+    print(f'[python-sidecar] proxy upstream {context.config.node_upstream}', flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == '__main__':
+    main()

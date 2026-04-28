@@ -112,6 +112,29 @@ docker compose logs -f
 
 如果想改持久化目录，可在 `.env` 里设置 `DATA_DIR`。Docker 默认已设为 `/data`。
 
+### Python 分阶段重构旁路
+
+仓库现在带了一个 **Python sidecar**，用于按“低风险接口先迁移，其余接口继续走 Node 参考实现”的方式逐步重构。
+
+当前 Python 原生接管：
+
+- `GET /health`
+- `GET /v1/models`
+- `GET /auth/status`
+- `GET /dashboard`
+- `GET /dashboard/i18n/*`
+- `GET /dashboard/data/*`
+
+其余接口会自动回源到现有 Node 服务，因此可以先双栈跑起来，再逐步把高风险协议路径迁到 Python。
+
+```bash
+cd /path/to/WindsurfAPI
+node src/index.js
+PYTHON_PORT=3004 python3 python/main.py
+```
+
+更多说明见 [`python/README.md`](python/README.md)。
+
 ### 一键更新
 
 部署过之后要拉最新修复，一条命令搞定：
