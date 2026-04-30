@@ -94,6 +94,9 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
             self._handle_health()
             return
         if self.command == 'GET' and path == '/v1/models':
+            if not self._validate_api_key():
+                self._json(401, {'error': {'message': 'Invalid API key', 'type': 'auth_error'}})
+                return
             self._handle_models()
             return
         if self.command == 'GET' and path == '/auth/status':
@@ -318,7 +321,7 @@ class WindsurfRequestHandler(BaseHTTPRequestHandler):
                 if not chunk:
                     break
                 self.wfile.write(chunk)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             print(f'[python-sidecar] upstream proxy failed for {self.path}: {exc}', file=sys.stderr, flush=True)
             self._json(502, {'error': {'message': 'Python sidecar upstream proxy failed', 'type': 'proxy_error'}})
         finally:
